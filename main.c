@@ -21,9 +21,21 @@ int getBit(const enum endianness endian_type,const int offset,const int size,con
 
   if (endian_type == E_LOW) {
 
-    for (int i = 0; i < 64; i++) {
+    printf("%x test\n",*value);
+
+    for (int i = 0; i < size*8; i++) {
+
+      int array_index = i/8;
+      int bit_index = i%8;
+
+      printf("%d ",array_index);
+      printf("%d\n",bit_index);
+
       binary_buffer *= 2;
-      binary_buffer |= (*value >> (64 - i - 1)) & 1;
+      binary_buffer |= (value[array_index] >> (8 - bit_index - 1)) & 1;
+
+      printf("%x\n",value[array_index]);
+      printf("%x\n",binary_buffer);
     }
 
   } else {
@@ -49,7 +61,7 @@ enum error readBinary(const char* file_name) {
   int testNum = 0x457f464c;
 
   //printf("%x\n",testNum);
-  printf("%x\n",getBit(E_LOW,0,8,buffer));
+  printf("%x\n",getBit(E_LOW,0,1,buffer));
 
   fclose(fptr);
 }
