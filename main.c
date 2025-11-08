@@ -16,7 +16,7 @@ void error_handler(const enum error error_code) {
   }
 }
 
-int getBit(const enum endianness endian_type,const int offset,const int size,const int *value) {
+int getBit(const enum endianness endian_type,const int offset,const int size,const unsigned char *value) {
   unsigned int binary_buffer = 0;
 
   if (endian_type == E_LOW) {
@@ -54,14 +54,14 @@ int getBit(const enum endianness endian_type,const int offset,const int size,con
 enum error readBinary(const char* file_name) {
   FILE *fptr = fopen(file_name,"rb");
 
-  unsigned int buffer[1024];
+  unsigned char buffer[1024];
 
   fread(buffer,sizeof(buffer),1,fptr);
 
   int testNum = 0x457f464c;
 
   //printf("%x\n",testNum);
-  printf("%x\n",getBit(E_LOW,0,1,buffer));
+  printf("%x\n",getBit(E_LOW,0,4,buffer));
 
   fclose(fptr);
 }
