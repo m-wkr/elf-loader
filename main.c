@@ -1,14 +1,24 @@
 #include <stdio.h>
 #include <stdint.h>
+#include <stdlib.h>
+#include <stdbool.h>
 
 #define EI_NIDENT 16
+
+#define ELFMAG0   0x7F
+#define ELFMAG1   0x45
+#define ELFMAG2   0x4c
+#define ELFMAG3   0x46
+#define ELFENDIAN 1   //little endian flag
+#define ELFARCH64 2   //64 bit architecture flag
+
+#define ELFMACHINE 0x3e //AMD x86-64
 
 typedef uint64_t    Elf64_Addr;
 typedef uint16_t    Elf64_Half;
 typedef uint64_t    Elf64_Off;
 typedef uint32_t    Elf64_Sword;
 typedef uint32_t    Elf64_Word;
-
 
 typedef struct {
   unsigned char e_ident[EI_NIDENT];
@@ -26,6 +36,19 @@ typedef struct {
   Elf64_Half      e_shnum;
   Elf64_Half      e_shstrndx;
 } Elf64_Elf_Hdr;
+
+enum ELF_IDEN {
+  EI_MAG0 = 0,
+  EI_MAG1,
+  EI_MAG2,
+  EI_MAG3,
+  EI_ARCH,
+  EI_ENDIAN,
+  EI_VER,
+  EI_OSABI,
+  EI_ABIVER,
+  EI_PAD
+};
 
 
 typedef struct {
@@ -69,52 +92,46 @@ void error_handler(const enum error error_code) {
   }
 }
 
-// offset is a BYTE offset, size is of a BYTE value, and value is the file buffer
-unsigned int getBit(const enum endianness endian_type,const int offset,const int size,const unsigned char *value) {
-  unsigned int binary_buffer = 0;
-
-  if (endian_type == E_LOW) {
-
-    for (int i = 0; i < size*8; i++) {
-
-      int array_index = i/8;
-      int bit_index = i%8;
-
-      //printf("%d ",array_index);
-      //printf("%d\n",bit_index);
-
-      binary_buffer *= 2;
-      binary_buffer |= (value[offset+array_index] >> (8 - bit_index - 1)) & 1;
-
-      //printf("%x\n",value[offset+array_index]);
-      //printf("%x\n",binary_buffer);
-    }
-
-  } else {
-
-    for (int i = 0; i < 64; i++) {
-      binary_buffer *=2;
-      binary_buffer |= (*value >> i) & 1;
-    }
-
+//write struct for errMsg, bool return type for now
+bool validateElfHeader(Elf64_Elf_Hdr *elf_hdr) {
+  if (elf_hdr->e_ident[EI_MAG0] != ELFMAG0) {
+    return false;
   }
 
-  return binary_buffer;
+  if (elf_hdr->e_ident[EI_MAG1] != ELFMAG1 || elf_hdr->e_ident[EI_MAG2] != ELFMAG2 || 
+    elf_hdr->e_ident[EI_MAG3] != ELFMAG3) {
+      return false;
+  }
+
+  if (elf_hdr->e_ident[EI_ARCH] != ELFARCH64) {
+    return false;
+  }
+
+  if (elf_hdr->e_ident[EI_ENDIAN] != ELFENDIAN) {
+    return false;
+  }
+
+
+  if (elf_hdr->e_machine != ELFMACHINE) {
+    return false;
+  }
+
+  return true;
 }
 
 
 enum error readBinary(const char* file_name) {
   FILE *fptr = fopen(file_name,"rb");
+  Elf64_Elf_Hdr elfIdentification;
 
-  unsigned char buffer[1024];
+  fread(&elfIdentification,sizeof(Elf64_Elf_Hdr),1,fptr);
 
-  fread(buffer,1,1024,fptr);
+  bool success = validateElfHeader(&elfIdentification);
 
-  printf("%x\n",getBit(E_LOW,18,8,buffer));
+  printf("%d\n",success);
 
   fclose(fptr);
 }
-
 
 
 int main(int argc, char **argv) {
