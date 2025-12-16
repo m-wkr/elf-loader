@@ -19,6 +19,7 @@ typedef uint16_t    Elf64_Half;
 typedef uint64_t    Elf64_Off;
 typedef uint32_t    Elf64_Sword;
 typedef uint32_t    Elf64_Word;
+typedef uint64_t    Elf64_Lword;
 
 typedef struct {
   unsigned char e_ident[EI_NIDENT];
@@ -55,25 +56,25 @@ typedef struct {
   Elf64_Word      sh_name;
 
   Elf64_Word      sh_type;
-  Elf64_Word      sh_flags;
+  Elf64_Lword      sh_flags;
   Elf64_Addr      sh_addr;
   Elf64_Off       sh_offset;
-  Elf64_Word      sh_size;
+  Elf64_Lword      sh_size;
   Elf64_Word      sh_link;
   Elf64_Word      sh_info;
-  Elf64_Word      sh_addralign;
-  Elf64_Word      sh_entsize;
+  Elf64_Lword      sh_addralign;
+  Elf64_Lword      sh_entsize;
 } Elf64_Section_Hdr;
 
 typedef struct {
   Elf64_Word      p_type;
+  Elf64_Word      p_flags;
   Elf64_Off       p_offset;
   Elf64_Addr      p_vaddr;
   Elf64_Addr      p_paddr;
-  Elf64_Word      p_filesz;
-  Elf64_Word      p_memsz;
-  Elf64_Word      p_flags;
-  Elf64_Word      p_aligns;
+  Elf64_Lword      p_filesz;
+  Elf64_Lword      p_memsz;
+  Elf64_Lword      p_aligns;
 } Elf64_Program_Hdr;
 
 enum error {
@@ -93,7 +94,7 @@ void error_handler(const enum error error_code) {
 }
 
 //write struct for errMsg, bool return type for now
-bool validateElfHeader(Elf64_Elf_Hdr *elf_hdr) {
+bool validateElfHeader(const Elf64_Elf_Hdr *elf_hdr) {
   if (elf_hdr->e_ident[EI_MAG0] != ELFMAG0) {
     return false;
   }
@@ -119,16 +120,47 @@ bool validateElfHeader(Elf64_Elf_Hdr *elf_hdr) {
   return true;
 }
 
+bool validateAllHdrSizes(const Elf64_Elf_Hdr *elf_hdr) {
+  if (elf_hdr->e_ehsize != sizeof(Elf64_Elf_Hdr)) {
+    return false;
+  }
+
+  if (elf_hdr->e_phentsize != sizeof(Elf64_Program_Hdr)) {
+    return false;
+  }
+
+  if (elf_hdr->e_shentsize != sizeof(Elf64_Section_Hdr)) {
+    return false;
+  }
+
+  return true;
+}
+
+bool hasPHdr(const Elf64_Elf_Hdr *elf_hdr) { //Wrapper function
+  return (elf_hdr->e_phnum);
+}
+
+uint8_t getSHdrSize(const Elf64_Elf_Hdr *elf_hdr) {
+  return elf_hdr->e_shnum;
+}
 
 enum error readBinary(const char* file_name) {
   FILE *fptr = fopen(file_name,"rb");
   Elf64_Elf_Hdr elfIdentification;
+  Elf64_Program_Hdr progIdentifer;
 
   fread(&elfIdentification,sizeof(Elf64_Elf_Hdr),1,fptr);
 
   bool success = validateElfHeader(&elfIdentification);
 
+  bool sizeSuccess = validateAllHdrSizes(&elfIdentification);
+
   printf("%d\n",success);
+  printf("%d\n",sizeSuccess);
+
+  fread(&progIdentifer,sizeof(progIdentifer),1,fptr);
+
+  printf("%lx\n",progIdentifer.p_vaddr);
 
   fclose(fptr);
 }
