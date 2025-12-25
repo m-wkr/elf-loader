@@ -3,6 +3,9 @@
 #include <stdlib.h>
 #include <stdbool.h>
 
+#include <sys/mman.h>
+#include <string.h>
+
 #define EI_NIDENT 16
 
 #define ELFMAG0   0x7F
@@ -140,29 +143,50 @@ bool hasPHdr(const Elf64_Elf_Hdr *elf_hdr) { //Wrapper function
   return (elf_hdr->e_phnum);
 }
 
-uint8_t getSHdrSize(const Elf64_Elf_Hdr *elf_hdr) {
+uint8_t getPHdrNum(const Elf64_Elf_Hdr *elf_hdr) {
+  return elf_hdr->e_phnum;
+}
+
+uint8_t getSHdrNum(const Elf64_Elf_Hdr *elf_hdr) {
   return elf_hdr->e_shnum;
+}
+
+void loadPhdr(const uint8_t phdrNumbers, FILE* fptr) {
+  for (uint8_t i = 0; i < phdrNumbers; i++) {
+    Elf64_Program_Hdr currentPHdr;
+
+    fread(&currentPHdr,sizeof(currentPHdr),1,fptr);
+
+    if (currentPHdr.p_type == 0x1) {
+      void* addr = mmap(currentPHdr.p_vaddr,currentPHdr.p_memsz,currentPHdr.p_flags,MAP_PRIVATE|MAP_FIXED,fileno(fptr),currentPHdr.p_offset);
+      memset((void*)(addr + currentPHdr.p_filesz),0,currentPHdr.p_memsz - currentPHdr.p_filesz);
+    }
+
+  }
 }
 
 enum error readBinary(const char* file_name) {
   FILE *fptr = fopen(file_name,"rb");
   Elf64_Elf_Hdr elfIdentification;
-  Elf64_Program_Hdr progIdentifer;
 
-  fread(&elfIdentification,sizeof(Elf64_Elf_Hdr),1,fptr);
+  fread(&elfIdentification,sizeof(Elf64_Elf_Hdr),1,fptr); //add err check
 
   bool success = validateElfHeader(&elfIdentification);
-
   bool sizeSuccess = validateAllHdrSizes(&elfIdentification);
 
-  printf("%d\n",success);
-  printf("%d\n",sizeSuccess);
+  uint8_t phdrNumbers = getPHdrNum(&elfIdentification);
 
-  fread(&progIdentifer,sizeof(progIdentifer),1,fptr);
+  for (uint8_t i = 0; i < phdrNumbers; i++) {
+    Elf64_Program_Hdr currentPHdr;
 
-  printf("%lx\n",progIdentifer.p_vaddr);
+    fread(&currentPHdr,sizeof(currentPHdr),1,fptr);
+    loadPhdr(phdrNumbers,fptr);
+  }
 
   fclose(fptr);
+
+  void (*entry)() = (void*)elfIdentification.e_entry;
+  entry();
 }
 
 
@@ -170,5 +194,6 @@ int main(int argc, char **argv) {
   if (argc > 1) {
     readBinary(argv[1]);
   }
+  //readBinary("d");
   return 0;
 }
