@@ -1,84 +1,10 @@
-#include <stdio.h>
-#include <stdint.h>
-#include <stdlib.h>
-#include <stdbool.h>
+#include "elf.h"
 
+#include <unistd.h>
 #include <sys/mman.h>
+#include <sys/auxv.h>
 #include <string.h>
 
-#define EI_NIDENT 16
-
-#define ELFMAG0   0x7F
-#define ELFMAG1   0x45
-#define ELFMAG2   0x4c
-#define ELFMAG3   0x46
-#define ELFENDIAN 1   //little endian flag
-#define ELFARCH64 2   //64 bit architecture flag
-
-#define ELFMACHINE 0x3e //AMD x86-64
-
-typedef uint64_t    Elf64_Addr;
-typedef uint16_t    Elf64_Half;
-typedef uint64_t    Elf64_Off;
-typedef uint32_t    Elf64_Sword;
-typedef uint32_t    Elf64_Word;
-typedef uint64_t    Elf64_Lword;
-
-typedef struct {
-  unsigned char e_ident[EI_NIDENT];
-  Elf64_Half      e_type;
-  Elf64_Half      e_machine;
-  Elf64_Word      e_version;
-  Elf64_Addr      e_entry;
-  Elf64_Off       e_phoff;
-  Elf64_Off       e_shoff;
-  Elf64_Word      e_flags;
-  Elf64_Half      e_ehsize;
-  Elf64_Half      e_phentsize;
-  Elf64_Half      e_phnum;
-  Elf64_Half      e_shentsize;
-  Elf64_Half      e_shnum;
-  Elf64_Half      e_shstrndx;
-} Elf64_Elf_Hdr;
-
-enum ELF_IDEN {
-  EI_MAG0 = 0,
-  EI_MAG1,
-  EI_MAG2,
-  EI_MAG3,
-  EI_ARCH,
-  EI_ENDIAN,
-  EI_VER,
-  EI_OSABI,
-  EI_ABIVER,
-  EI_PAD
-};
-
-
-typedef struct {
-  Elf64_Word      sh_name;
-
-  Elf64_Word      sh_type;
-  Elf64_Lword      sh_flags;
-  Elf64_Addr      sh_addr;
-  Elf64_Off       sh_offset;
-  Elf64_Lword      sh_size;
-  Elf64_Word      sh_link;
-  Elf64_Word      sh_info;
-  Elf64_Lword      sh_addralign;
-  Elf64_Lword      sh_entsize;
-} Elf64_Section_Hdr;
-
-typedef struct {
-  Elf64_Word      p_type;
-  Elf64_Word      p_flags;
-  Elf64_Off       p_offset;
-  Elf64_Addr      p_vaddr;
-  Elf64_Addr      p_paddr;
-  Elf64_Lword      p_filesz;
-  Elf64_Lword      p_memsz;
-  Elf64_Lword      p_aligns;
-} Elf64_Program_Hdr;
 
 enum error {
   NO_ERROR,
@@ -165,7 +91,12 @@ void loadPhdr(const uint8_t phdrNumbers, FILE* fptr) {
   }
 }
 
-enum error readBinary(const char* file_name) {
+struct {
+  Elf64_Ehdr e;
+  Elf64_Addr p;
+};
+
+Elf64_Elf_Hdr readBinary(const char* file_name) {
   FILE *fptr = fopen(file_name,"rb");
   Elf64_Elf_Hdr elfIdentification;
 
@@ -176,24 +107,87 @@ enum error readBinary(const char* file_name) {
 
   uint8_t phdrNumbers = getPHdrNum(&elfIdentification);
 
-  for (uint8_t i = 0; i < phdrNumbers; i++) {
-    Elf64_Program_Hdr currentPHdr;
-
-    fread(&currentPHdr,sizeof(currentPHdr),1,fptr);
-    loadPhdr(phdrNumbers,fptr);
-  }
+  loadPhdr(phdrNumbers,fptr);
 
   fclose(fptr);
 
-  void (*entry)() = (void*)elfIdentification.e_entry;
+  return elfIdentification;
+}
+
+uint64_t allocateStack(Elf64_auxv_t* auxv,int argc, char** argv) {//char**envp) {
+  int auxc = sizeof(auxv);
+
+  const size_t STACK_SIZE = 1024*1024;
+  void* stack_bottom = mmap(NULL,STACK_SIZE,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0);
+  uintptr_t* sp = stack_bottom+STACK_SIZE; //stack_top /bottom rename these, confusing
+
+  sp-=2;
+
+  sp[0] = AT_NULL; //thing
+  sp[1] = 0;
+
+  //arg strings
+
+  //auxv
+  for (int i = auxc-1; i >=0; i--) {
+    sp--;
+    sp[0] = auxv[i].a_type;
+    sp[1] = auxv[i].a_un.a_val;
+  }
+
+  sp--;
+  *sp = 0;
+
+  //argv 
+  sp--;
+  *sp=0;
+
+  for (int i = argc-1;i>=0;i--) {
+    sp--;
+    *sp = (uint64_t)argv[i];
+  }
+
+  //argc
+  sp--;
+  *sp=argc;
+
+  return sp;
+}
+
+void executeProgram(uint64_t sp, uint64_t entryptr) {
+  asm volatile(
+    "mov %0, %%rsp;"
+    :
+    :"r" (sp)
+    :
+  );
+
+  void (*entry)() = (void*)entryptr;
   entry();
 }
 
 
 int main(int argc, char **argv) {
-  if (argc > 1) {
-    readBinary(argv[1]);
+  if (argc < 2) {
+    return 0;
   }
-  //readBinary("d");
+
+  Elf64_Elf_Hdr ehdr = readBinary(argv[1]);
+
+  Elf64_auxv_t auxv[] = {
+    {AT_PAGESZ,sysconf(_SC_PAGE_SIZE)},
+    {AT_PHDR, ehdr.e_phoff},
+    {AT_PHENT,ehdr.e_phentsize},
+    {AT_PHNUM,ehdr.e_phnum},
+    {AT_ENTRY,ehdr.e_entry},
+    {AT_HWCAP,getauxval(AT_HWCAP)},
+    {AT_HWCAP2,getauxval(AT_HWCAP2)},
+    {AT_SYSINFO_EHDR,getauxval(AT_SYSINFO_EHDR)},
+    {AT_NULL,0}
+  };
+
+  uint64_t sp = allocateStack(auxv,argc-1,argv+1);
+  executeProgram(sp,ehdr.e_entry);
+
   return 0;
 }
