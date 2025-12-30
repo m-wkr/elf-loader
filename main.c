@@ -77,18 +77,44 @@ uint8_t getSHdrNum(const Elf64_Elf_Hdr *elf_hdr) {
   return elf_hdr->e_shnum;
 }
 
-void loadPhdr(const uint8_t phdrNumbers, FILE* fptr) {
+int getMemoryFlags(int elfFlags) {
+  int flags = 0;
+
+  if (elfFlags&1) {
+    flags |= PROT_EXEC;
+  }
+
+  if (elfFlags&2) {
+    flags |= PROT_WRITE;
+  }
+
+  if (elfFlags&4) {
+    flags |= PROT_READ;
+  }
+
+  return flags;
+}
+
+Elf64_Addr loadPhdr(const uint8_t phdrNumbers, FILE* fptr) {
+  Elf64_Addr phdrAddr = 0x0;
+
   for (uint8_t i = 0; i < phdrNumbers; i++) {
     Elf64_Program_Hdr currentPHdr;
 
     fread(&currentPHdr,sizeof(currentPHdr),1,fptr);
 
     if (currentPHdr.p_type == 0x1) {
-      void* addr = mmap(currentPHdr.p_vaddr,currentPHdr.p_memsz,currentPHdr.p_flags,MAP_PRIVATE|MAP_FIXED,fileno(fptr),currentPHdr.p_offset);
+      void* addr = mmap(currentPHdr.p_vaddr,currentPHdr.p_memsz,getMemoryFlags(currentPHdr.p_flags),MAP_PRIVATE|MAP_FIXED,fileno(fptr),currentPHdr.p_offset);
       memset((void*)(addr + currentPHdr.p_filesz),0,currentPHdr.p_memsz - currentPHdr.p_filesz);
+
+      if (phdrAddr == 0x0) {
+        phdrAddr = addr;
+      } 
     }
 
   }
+
+  return phdrAddr;
 }
 
 struct {
@@ -96,22 +122,22 @@ struct {
   Elf64_Addr p;
 };
 
-Elf64_Elf_Hdr readBinary(const char* file_name) {
+Elf64_Addr readBinary(const char* file_name, Elf64_Elf_Hdr* ehdr) {
   FILE *fptr = fopen(file_name,"rb");
-  Elf64_Elf_Hdr elfIdentification;
+  //Elf64_Elf_Hdr elfIdentification;
 
-  fread(&elfIdentification,sizeof(Elf64_Elf_Hdr),1,fptr); //add err check
+  fread(ehdr,sizeof(Elf64_Elf_Hdr),1,fptr); //add err check
 
-  bool success = validateElfHeader(&elfIdentification);
-  bool sizeSuccess = validateAllHdrSizes(&elfIdentification);
+  bool success = validateElfHeader(ehdr);
+  bool sizeSuccess = validateAllHdrSizes(ehdr);
 
-  uint8_t phdrNumbers = getPHdrNum(&elfIdentification);
+  uint8_t phdrNumbers = getPHdrNum(ehdr);
 
-  loadPhdr(phdrNumbers,fptr);
+  Elf64_Addr phdrAddr = loadPhdr(phdrNumbers,fptr);
 
   fclose(fptr);
 
-  return elfIdentification;
+  return phdrAddr;
 }
 
 uint64_t allocateStack(Elf64_auxv_t* auxv,int argc, char** argv) {//char**envp) {
@@ -119,7 +145,7 @@ uint64_t allocateStack(Elf64_auxv_t* auxv,int argc, char** argv) {//char**envp) 
 
   const size_t STACK_SIZE = 1024*1024;
   void* stack_bottom = mmap(NULL,STACK_SIZE,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0);
-  uintptr_t* sp = stack_bottom+STACK_SIZE; //stack_top /bottom rename these, confusing
+  uint64_t* sp = stack_bottom+STACK_SIZE; //stack_top /bottom rename these, confusing
 
   sp-=2;
 
@@ -149,7 +175,7 @@ uint64_t allocateStack(Elf64_auxv_t* auxv,int argc, char** argv) {//char**envp) 
 
   //argc
   sp--;
-  *sp=argc;
+  *sp = argc;
 
   return sp;
 }
@@ -172,14 +198,16 @@ int main(int argc, char **argv) {
     return 0;
   }
 
-  Elf64_Elf_Hdr ehdr = readBinary(argv[1]);
+  Elf64_Elf_Hdr elfHdrBuffer;
+
+  Elf64_Addr phdr = readBinary(argv[1],&elfHdrBuffer);
 
   Elf64_auxv_t auxv[] = {
     {AT_PAGESZ,sysconf(_SC_PAGE_SIZE)},
-    {AT_PHDR, ehdr.e_phoff},
-    {AT_PHENT,ehdr.e_phentsize},
-    {AT_PHNUM,ehdr.e_phnum},
-    {AT_ENTRY,ehdr.e_entry},
+    {AT_PHDR, phdr},
+    {AT_PHENT,elfHdrBuffer.e_phentsize},
+    {AT_PHNUM,elfHdrBuffer.e_phnum},
+    {AT_ENTRY,elfHdrBuffer.e_entry},
     {AT_HWCAP,getauxval(AT_HWCAP)},
     {AT_HWCAP2,getauxval(AT_HWCAP2)},
     {AT_SYSINFO_EHDR,getauxval(AT_SYSINFO_EHDR)},
@@ -187,7 +215,10 @@ int main(int argc, char **argv) {
   };
 
   uint64_t sp = allocateStack(auxv,argc-1,argv+1);
-  executeProgram(sp,ehdr.e_entry);
+
+  printf("%lx\n",sp);
+  printf("%lx\n",phdr);
+  executeProgram(sp,elfHdrBuffer.e_entry);
 
   return 0;
 }
