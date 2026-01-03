@@ -1,5 +1,8 @@
 #include "elf.h"
 
+#define ET_EXEC 0x2
+#define ET_DYN 0x3
+
 void error_handler(const enum error error_code) {
   if (error_code != NO_ERROR) {
     printf("File could not be opened, please ensure that it exists\n");
@@ -59,4 +62,8 @@ uint8_t getPHdrNum(const Elf64_Elf_Hdr *elf_hdr) {
 
 uint8_t getSHdrNum(const Elf64_Elf_Hdr *elf_hdr) {
   return elf_hdr->e_shnum;
+}
+
+bool isDyn(const Elf64_Elf_Hdr *elf_hdr) {
+  return elf_hdr->e_type == ET_DYN;
 }
