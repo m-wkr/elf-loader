@@ -98,3 +98,5 @@ bool hasPHdr(const Elf64_Elf_Hdr *elf_hdr);
 uint8_t getPHdrNum(const Elf64_Elf_Hdr *elf_hdr);
 
 uint8_t getSHdrNum(const Elf64_Elf_Hdr *elf_hdr);
+
+bool isDyn(const Elf64_Elf_Hdr *elf_hdr);

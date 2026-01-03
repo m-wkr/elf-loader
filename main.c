@@ -5,12 +5,6 @@
 #include <string.h>
 
 
-enum endianness {
-  E_LOW,
-  E_HIGH
-};
-
-
 int getMemoryFlags(int elfFlags) {
   int flags = 0;
 
@@ -29,8 +23,13 @@ int getMemoryFlags(int elfFlags) {
   return flags;
 }
 
-Elf64_Addr loadPhdr(const uint8_t phdrNumbers, FILE* fptr) {
-  Elf64_Addr phdrAddr = 0x0;
+Elf64_Addr loadPhdr(const bool isDynamic, const uint8_t phdrNumbers, FILE* fptr) {
+  uint64_t totalMem = 0;
+
+  Elf64_Program_Hdr segments[phdrNumbers];
+  uint8_t segIndex = 0;
+
+  Elf64_Addr startAddr = NULL;
 
   for (uint8_t i = 0; i < phdrNumbers; i++) {
     Elf64_Program_Hdr currentPHdr;
@@ -38,17 +37,35 @@ Elf64_Addr loadPhdr(const uint8_t phdrNumbers, FILE* fptr) {
     fread(&currentPHdr,sizeof(currentPHdr),1,fptr);
 
     if (currentPHdr.p_type == 0x1) {
-      void* addr = mmap(currentPHdr.p_vaddr,currentPHdr.p_memsz,getMemoryFlags(currentPHdr.p_flags),MAP_PRIVATE|MAP_FIXED,fileno(fptr),currentPHdr.p_offset);
-      memset((void*)(addr + currentPHdr.p_filesz),0,currentPHdr.p_memsz - currentPHdr.p_filesz);
 
-      if (phdrAddr == 0x0) {
-        phdrAddr = addr;
-      } 
+      if (!isDynamic) {
+        void* addr = mmap(currentPHdr.p_vaddr,currentPHdr.p_memsz,getMemoryFlags(currentPHdr.p_flags),MAP_PRIVATE|MAP_FIXED,fileno(fptr),currentPHdr.p_offset);
+        memset((void*)(addr + currentPHdr.p_filesz),0,currentPHdr.p_memsz - currentPHdr.p_filesz);
+
+      if (startAddr == 0x0) {
+        startAddr = addr;
+      }
+
+      }
+
+      segments[segIndex] = currentPHdr;
+      segIndex++;
+
+      totalMem += currentPHdr.p_memsz;
     }
+
+    if (isDynamic) {
+      startAddr = mmap(NULL,totalMem,0,MAP_PRIVATE,fileno(fptr),0);
+      int success = munmap(startAddr,totalMem);
+      
+      for (uint8_t i = 0; i < segIndex;i++) {
+        mmap(startAddr+segments[i].p_vaddr,segments[i].p_memsz,getMemoryFlags(segments[i].p_flags),MAP_PRIVATE|MAP_FIXED,fileno(fptr),segments[i].p_offset);
+      }
+    } 
 
   }
 
-  return phdrAddr;
+  return startAddr;
 }
 
 struct {
@@ -64,10 +81,11 @@ Elf64_Addr readBinary(const char* file_name, Elf64_Elf_Hdr* ehdr) {
 
   bool success = validateElfHeader(ehdr);
   bool sizeSuccess = validateAllHdrSizes(ehdr);
+  bool dyn = isDyn(ehdr);
 
   uint8_t phdrNumbers = getPHdrNum(ehdr);
 
-  Elf64_Addr phdrAddr = loadPhdr(phdrNumbers,fptr);
+  Elf64_Addr phdrAddr = loadPhdr(dyn,phdrNumbers,fptr);
 
   fclose(fptr);
 
