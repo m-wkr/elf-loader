@@ -1,94 +1,28 @@
 #include "elf.h"
+#include "stack.h"
 
 #include <unistd.h>
-#include <sys/mman.h>
-#include <sys/auxv.h>
 #include <string.h>
 
-
-enum error {
-  NO_ERROR,
-  FILE_ISSUE
-};
 
 enum endianness {
   E_LOW,
   E_HIGH
 };
 
-void error_handler(const enum error error_code) {
-  if (error_code != NO_ERROR) {
-    printf("File could not be opened, please ensure that it exists\n");
-  }
-}
-
-//write struct for errMsg, bool return type for now
-bool validateElfHeader(const Elf64_Elf_Hdr *elf_hdr) {
-  if (elf_hdr->e_ident[EI_MAG0] != ELFMAG0) {
-    return false;
-  }
-
-  if (elf_hdr->e_ident[EI_MAG1] != ELFMAG1 || elf_hdr->e_ident[EI_MAG2] != ELFMAG2 || 
-    elf_hdr->e_ident[EI_MAG3] != ELFMAG3) {
-      return false;
-  }
-
-  if (elf_hdr->e_ident[EI_ARCH] != ELFARCH64) {
-    return false;
-  }
-
-  if (elf_hdr->e_ident[EI_ENDIAN] != ELFENDIAN) {
-    return false;
-  }
-
-
-  if (elf_hdr->e_machine != ELFMACHINE) {
-    return false;
-  }
-
-  return true;
-}
-
-bool validateAllHdrSizes(const Elf64_Elf_Hdr *elf_hdr) {
-  if (elf_hdr->e_ehsize != sizeof(Elf64_Elf_Hdr)) {
-    return false;
-  }
-
-  if (elf_hdr->e_phentsize != sizeof(Elf64_Program_Hdr)) {
-    return false;
-  }
-
-  if (elf_hdr->e_shentsize != sizeof(Elf64_Section_Hdr)) {
-    return false;
-  }
-
-  return true;
-}
-
-bool hasPHdr(const Elf64_Elf_Hdr *elf_hdr) { //Wrapper function
-  return (elf_hdr->e_phnum);
-}
-
-uint8_t getPHdrNum(const Elf64_Elf_Hdr *elf_hdr) {
-  return elf_hdr->e_phnum;
-}
-
-uint8_t getSHdrNum(const Elf64_Elf_Hdr *elf_hdr) {
-  return elf_hdr->e_shnum;
-}
 
 int getMemoryFlags(int elfFlags) {
   int flags = 0;
 
-  if (elfFlags&1) {
+  if (elfFlags&PF_R) {
     flags |= PROT_EXEC;
   }
 
-  if (elfFlags&2) {
+  if (elfFlags&PF_W) {
     flags |= PROT_WRITE;
   }
 
-  if (elfFlags&4) {
+  if (elfFlags&PF_R) {
     flags |= PROT_READ;
   }
 
@@ -138,46 +72,6 @@ Elf64_Addr readBinary(const char* file_name, Elf64_Elf_Hdr* ehdr) {
   fclose(fptr);
 
   return phdrAddr;
-}
-
-uint64_t allocateStack(Elf64_auxv_t* auxv,int argc, char** argv) {//char**envp) {
-  int auxc = sizeof(auxv);
-
-  const size_t STACK_SIZE = 1024*1024;
-  void* stack_bottom = mmap(NULL,STACK_SIZE,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0);
-  uint64_t* sp = stack_bottom+STACK_SIZE; //stack_top /bottom rename these, confusing
-
-  sp-=2;
-
-  sp[0] = AT_NULL; //thing
-  sp[1] = 0;
-
-  //arg strings
-
-  //auxv
-  for (int i = auxc-1; i >=0; i--) {
-    sp--;
-    sp[0] = auxv[i].a_type;
-    sp[1] = auxv[i].a_un.a_val;
-  }
-
-  sp--;
-  *sp = 0;
-
-  //argv 
-  sp--;
-  *sp=0;
-
-  for (int i = argc-1;i>=0;i--) {
-    sp--;
-    *sp = (uint64_t)argv[i];
-  }
-
-  //argc
-  sp--;
-  *sp = argc;
-
-  return sp;
 }
 
 void executeProgram(uint64_t sp, uint64_t entryptr) {

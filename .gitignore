@@ -1,1 +1,8 @@
 *.out
+*
+!elf.h
+!elf.c
+!stack.h
+!stack.c
+!main.c
+!.gitignore
