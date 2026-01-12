@@ -8,7 +8,7 @@
 int getMemoryFlags(int elfFlags) {
   int flags = 0;
 
-  if (elfFlags&PF_R) {
+  if (elfFlags&PF_X) {
     flags |= PROT_EXEC;
   }
 
@@ -37,17 +37,13 @@ Elf64_Addr loadPhdr(const uint8_t phdrNumbers, FILE* fptr) {
     fread(&currentPHdr,sizeof(currentPHdr),1,fptr);
     
     if (currentPHdr.p_type == 0x1) {
+      printf("%lx\n wwwwww",currentPHdr.p_vaddr);
       void* addr = mmap(currentPHdr.p_vaddr,currentPHdr.p_memsz,getMemoryFlags(currentPHdr.p_flags),MAP_PRIVATE|MAP_FIXED,fileno(fptr),currentPHdr.p_offset);
       memset((void*)(addr + currentPHdr.p_filesz),0,currentPHdr.p_memsz - currentPHdr.p_filesz);
 
       if (startAddr == 0x0) {
         startAddr = addr;
       }
-
-      segments[segIndex] = currentPHdr;
-      segIndex++;
-
-      totalMem += currentPHdr.p_memsz;
     }
   }
 
@@ -55,7 +51,6 @@ Elf64_Addr loadPhdr(const uint8_t phdrNumbers, FILE* fptr) {
 }
 
 void findINTERPPath(char interpPath[],const uint8_t phdrNumbers, FILE* fptr) {
-  //char interpPath[512] = {0};
 
   for (uint8_t i = 0; i < phdrNumbers; i++) {
     Elf64_Program_Hdr currentPHdr;
@@ -63,10 +58,10 @@ void findINTERPPath(char interpPath[],const uint8_t phdrNumbers, FILE* fptr) {
     fread(&currentPHdr,sizeof(currentPHdr),1,fptr);
 
     if (currentPHdr.p_type == 0x3) {
-      int fd = fileno(fptr);
-      lseek(fd, currentPHdr.p_offset, SEEK_SET);
-      read(fd, interpPath, currentPHdr.p_filesz);
-      lseek(fd,0,SEEK_SET);
+      long savedPos = ftell(fptr);
+      fseek(fptr, currentPHdr.p_offset, SEEK_SET);
+      fread(interpPath,512,1,fptr);
+      fseek(fptr,savedPos,SEEK_SET);
       break;
     } 
   }
@@ -94,11 +89,14 @@ Elf64_Addr loadDYN(const uint8_t phdrNumbers, FILE* fptr) {
     }
   }
 
-  startAddr = mmap(NULL,totalMem,0,MAP_PRIVATE,fileno(fptr),0);
-  int success = munmap(startAddr,totalMem);
-  
-  for (uint8_t i = 0; i < segIndex;i++) {
-    mmap(startAddr+segments[i].p_vaddr,segments[i].p_memsz,getMemoryFlags(segments[i].p_flags),MAP_PRIVATE|MAP_FIXED,fileno(fptr),segments[i].p_offset);
+  startAddr = mmap(NULL,2*totalMem,PROT_READ|PROT_WRITE|PROT_EXEC,MAP_PRIVATE,fileno(fptr),0);
+
+  for (int i = 0; i < segIndex;i++) {
+    void *dest = (char *)startAddr + segments[i].p_vaddr;
+    fseek(fptr,segments[i].p_offset,SEEK_SET);
+    fread(dest,segments[i].p_filesz,1,fptr);
+    // Zero out BSS (p_memsz > p_filesz)
+    memset((char *)dest + segments[i].p_filesz, 0, segments[i].p_memsz - segments[i].p_filesz);
   }
 
   return startAddr;
@@ -110,29 +108,44 @@ struct {
 };
 
 Elf64_Addr readInterp(const char* filename) {
+  printf("%s\n",filename);
   FILE *fptr = fopen(filename,"rb");
   Elf64_Elf_Hdr ehdr;
 
   fread(&ehdr,sizeof(Elf64_Elf_Hdr),1,fptr); //add err check
-
+  fseek(fptr, ehdr.e_phoff, SEEK_SET);
   bool success = validateElfHeader(&ehdr);
   bool sizeSuccess = validateAllHdrSizes(&ehdr);
   bool dyn = isDyn(&ehdr);
 
   uint8_t phdrNumbers = getPHdrNum(&ehdr);
 
+  fseek(fptr,ehdr.e_phoff,SEEK_SET);
+  printf("%s\n","erm1");
   Elf64_Addr startAddr = loadDYN(phdrNumbers,fptr);
+  printf("%s\n","erm2");
 
   fclose(fptr);
 
+  printf("%lx entry!!!!!!!\n",ehdr.e_entry);
+  printf("%lx startAddr \n",startAddr);
+
   return startAddr;
+}
+
+void loadSeg(Elf64_Program_Hdr segments[],const uint8_t phdrNumbers, FILE* fptr) {
+  uint8_t segIndex = 0;
+
+  for (uint8_t i = 0; i < phdrNumbers; i++) {
+    fread(segments+i,sizeof(Elf64_Program_Hdr),1,fptr);
+  }
 }
 
 Elf64_Addr readBinary(const char* file_name, Elf64_Elf_Hdr* ehdr) {
   FILE *fptr = fopen(file_name,"rb");
 
   fread(ehdr,sizeof(Elf64_Elf_Hdr),1,fptr); //add err check
-
+  fseek(fptr, ehdr->e_phoff, SEEK_SET);
   bool success = validateElfHeader(ehdr);
   bool sizeSuccess = validateAllHdrSizes(ehdr);
   bool dyn = isDyn(ehdr);
@@ -146,7 +159,7 @@ Elf64_Addr readBinary(const char* file_name, Elf64_Elf_Hdr* ehdr) {
     findINTERPPath(interpPath,phdrNumbers,fptr);
     startAddr = readInterp(interpPath);
   } else {
-    loadPhdr(phdrNumbers,fptr);
+    startAddr = loadPhdr(phdrNumbers,fptr);
   }
 
   fclose(fptr);
@@ -155,14 +168,16 @@ Elf64_Addr readBinary(const char* file_name, Elf64_Elf_Hdr* ehdr) {
 }
 
 void executeProgram(uint64_t* sp, uint64_t entryptr) {
-  void (*entry)() = (void*)entryptr;
+  printf("rsp mod 16 = %lu\n", ((uintptr_t)sp) & 0xF);
   asm volatile(
     "mov %0, %%rsp;"
+    "jmp *%1\n\t"
     :
-    :"r" (sp)
-    :
+    : "r"(sp), "r"(entryptr)
+    : "memory"
   );
-  entry();
+
+  __builtin_unreachable();
 }
 
 int main(int argc, char **argv, char** envp) {
@@ -172,25 +187,49 @@ int main(int argc, char **argv, char** envp) {
 
   Elf64_Elf_Hdr elfHdrBuffer;
 
+  printf("%s\n","prog0");
+
   Elf64_Addr phdr = readBinary(argv[1],&elfHdrBuffer);
+
+  printf("%s\n","prog1");
+
+  FILE* file = fopen(argv[1],"rb");
+  Elf64_Program_Hdr segments[elfHdrBuffer.e_phnum];
+  Elf64_Addr segphdr= mmap(NULL,elfHdrBuffer.e_phnum*sizeof(Elf64_Program_Hdr),PROT_READ,MAP_PRIVATE,fileno(file),elfHdrBuffer.e_phoff);
+  fclose(file);
+
+  printf("%s\n","prog2");
+
+  uint64_t spVal;
+  asm( "mov %%rsp, %0" : "=rm" ( spVal ));
 
   Elf64_auxv_t auxv[] = {
     {AT_PAGESZ,sysconf(_SC_PAGE_SIZE)},
-    {AT_PHDR, phdr},
+    {AT_RANDOM,spVal},
+    {AT_PHDR, segphdr},
+    {AT_EXECFN,argv[1]},
     {AT_PHENT,elfHdrBuffer.e_phentsize},
     {AT_PHNUM,elfHdrBuffer.e_phnum},
     {AT_ENTRY,elfHdrBuffer.e_entry},
+    {AT_UID,getuid()},
+    {AT_EUID,geteuid()},
+    {AT_GID,getgid()},
+    {AT_EGID,getegid()},
     {AT_HWCAP,getauxval(AT_HWCAP)},
     {AT_HWCAP2,getauxval(AT_HWCAP2)},
-    {AT_SYSINFO_EHDR,getauxval(AT_SYSINFO_EHDR)},
+    {AT_SECURE,0},
+    {AT_BASE,phdr},
+    {AT_MINSIGSTKSZ,0x4000},
     {AT_NULL,0}
   };
 
   uint64_t* sp = allocateStack(auxv,argc-1,argv+1,envp);
 
-  printf("%lx\n",sp);
-  printf("%lx\n",phdr);
-  executeProgram(sp,elfHdrBuffer.e_entry);
+  printf("%lx sp\n",sp);
+  printf("%lx entry\n",phdr+0x1f540);
+  printf("%lx original entry offset\n",elfHdrBuffer.e_entry);
+  //executeProgram(sp,elfHdrBuffer.e_entry); //correct for static
+  executeProgram(sp,phdr+0x1f540);
 
   return 0;
 }
