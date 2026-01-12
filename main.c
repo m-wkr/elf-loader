@@ -23,7 +23,56 @@ int getMemoryFlags(int elfFlags) {
   return flags;
 }
 
-Elf64_Addr loadPhdr(const bool isDynamic, const uint8_t phdrNumbers, FILE* fptr) {
+Elf64_Addr loadPhdr(const uint8_t phdrNumbers, FILE* fptr) {
+  uint64_t totalMem = 0;
+
+  Elf64_Program_Hdr segments[phdrNumbers];
+  uint8_t segIndex = 0;
+
+  Elf64_Addr startAddr = NULL;
+
+  for (uint8_t i = 0; i < phdrNumbers; i++) {
+    Elf64_Program_Hdr currentPHdr;
+
+    fread(&currentPHdr,sizeof(currentPHdr),1,fptr);
+    
+    if (currentPHdr.p_type == 0x1) {
+      void* addr = mmap(currentPHdr.p_vaddr,currentPHdr.p_memsz,getMemoryFlags(currentPHdr.p_flags),MAP_PRIVATE|MAP_FIXED,fileno(fptr),currentPHdr.p_offset);
+      memset((void*)(addr + currentPHdr.p_filesz),0,currentPHdr.p_memsz - currentPHdr.p_filesz);
+
+      if (startAddr == 0x0) {
+        startAddr = addr;
+      }
+
+      segments[segIndex] = currentPHdr;
+      segIndex++;
+
+      totalMem += currentPHdr.p_memsz;
+    }
+  }
+
+  return startAddr;
+}
+
+void findINTERPPath(char interpPath[],const uint8_t phdrNumbers, FILE* fptr) {
+  //char interpPath[512] = {0};
+
+  for (uint8_t i = 0; i < phdrNumbers; i++) {
+    Elf64_Program_Hdr currentPHdr;
+
+    fread(&currentPHdr,sizeof(currentPHdr),1,fptr);
+
+    if (currentPHdr.p_type == 0x3) {
+      int fd = fileno(fptr);
+      lseek(fd, currentPHdr.p_offset, SEEK_SET);
+      read(fd, interpPath, currentPHdr.p_filesz);
+      lseek(fd,0,SEEK_SET);
+      break;
+    } 
+  }
+}
+
+Elf64_Addr loadDYN(const uint8_t phdrNumbers, FILE* fptr) {
   uint64_t totalMem = 0;
 
   Elf64_Program_Hdr segments[phdrNumbers];
@@ -38,31 +87,18 @@ Elf64_Addr loadPhdr(const bool isDynamic, const uint8_t phdrNumbers, FILE* fptr)
 
     if (currentPHdr.p_type == 0x1) {
 
-      if (!isDynamic) {
-        void* addr = mmap(currentPHdr.p_vaddr,currentPHdr.p_memsz,getMemoryFlags(currentPHdr.p_flags),MAP_PRIVATE|MAP_FIXED,fileno(fptr),currentPHdr.p_offset);
-        memset((void*)(addr + currentPHdr.p_filesz),0,currentPHdr.p_memsz - currentPHdr.p_filesz);
-
-      if (startAddr == 0x0) {
-        startAddr = addr;
-      }
-
-      }
-
       segments[segIndex] = currentPHdr;
       segIndex++;
 
       totalMem += currentPHdr.p_memsz;
     }
+  }
 
-    if (isDynamic) {
-      startAddr = mmap(NULL,totalMem,0,MAP_PRIVATE,fileno(fptr),0);
-      int success = munmap(startAddr,totalMem);
-      
-      for (uint8_t i = 0; i < segIndex;i++) {
-        mmap(startAddr+segments[i].p_vaddr,segments[i].p_memsz,getMemoryFlags(segments[i].p_flags),MAP_PRIVATE|MAP_FIXED,fileno(fptr),segments[i].p_offset);
-      }
-    } 
-
+  startAddr = mmap(NULL,totalMem,0,MAP_PRIVATE,fileno(fptr),0);
+  int success = munmap(startAddr,totalMem);
+  
+  for (uint8_t i = 0; i < segIndex;i++) {
+    mmap(startAddr+segments[i].p_vaddr,segments[i].p_memsz,getMemoryFlags(segments[i].p_flags),MAP_PRIVATE|MAP_FIXED,fileno(fptr),segments[i].p_offset);
   }
 
   return startAddr;
@@ -73,9 +109,27 @@ struct {
   Elf64_Addr p;
 };
 
+Elf64_Addr readInterp(const char* filename) {
+  FILE *fptr = fopen(filename,"rb");
+  Elf64_Elf_Hdr ehdr;
+
+  fread(&ehdr,sizeof(Elf64_Elf_Hdr),1,fptr); //add err check
+
+  bool success = validateElfHeader(&ehdr);
+  bool sizeSuccess = validateAllHdrSizes(&ehdr);
+  bool dyn = isDyn(&ehdr);
+
+  uint8_t phdrNumbers = getPHdrNum(&ehdr);
+
+  Elf64_Addr startAddr = loadDYN(phdrNumbers,fptr);
+
+  fclose(fptr);
+
+  return startAddr;
+}
+
 Elf64_Addr readBinary(const char* file_name, Elf64_Elf_Hdr* ehdr) {
   FILE *fptr = fopen(file_name,"rb");
-  //Elf64_Elf_Hdr elfIdentification;
 
   fread(ehdr,sizeof(Elf64_Elf_Hdr),1,fptr); //add err check
 
@@ -85,11 +139,19 @@ Elf64_Addr readBinary(const char* file_name, Elf64_Elf_Hdr* ehdr) {
 
   uint8_t phdrNumbers = getPHdrNum(ehdr);
 
-  Elf64_Addr phdrAddr = loadPhdr(dyn,phdrNumbers,fptr);
+  Elf64_Addr startAddr = 0;
+  
+  if (dyn) {
+    char interpPath[512] = {0};
+    findINTERPPath(interpPath,phdrNumbers,fptr);
+    startAddr = readInterp(interpPath);
+  } else {
+    loadPhdr(phdrNumbers,fptr);
+  }
 
   fclose(fptr);
 
-  return phdrAddr;
+  return startAddr;
 }
 
 void executeProgram(uint64_t* sp, uint64_t entryptr) {
