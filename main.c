@@ -92,20 +92,18 @@ Elf64_Addr readBinary(const char* file_name, Elf64_Elf_Hdr* ehdr) {
   return phdrAddr;
 }
 
-void executeProgram(uint64_t sp, uint64_t entryptr) {
+void executeProgram(uint64_t* sp, uint64_t entryptr) {
+  void (*entry)() = (void*)entryptr;
   asm volatile(
     "mov %0, %%rsp;"
     :
     :"r" (sp)
     :
   );
-
-  void (*entry)() = (void*)entryptr;
   entry();
 }
 
-
-int main(int argc, char **argv) {
+int main(int argc, char **argv, char** envp) {
   if (argc < 2) {
     return 0;
   }
@@ -126,7 +124,7 @@ int main(int argc, char **argv) {
     {AT_NULL,0}
   };
 
-  uint64_t sp = allocateStack(auxv,argc-1,argv+1);
+  uint64_t* sp = allocateStack(auxv,argc-1,argv+1,envp);
 
   printf("%lx\n",sp);
   printf("%lx\n",phdr);
