@@ -167,8 +167,8 @@ Elf64_Addr readBinary(const char* file_name, Elf64_Elf_Hdr* ehdr) {
   return startAddr;
 }
 
-void executeProgram(uint64_t* sp, uint64_t entryptr) {
-  printf("rsp mod 16 = %lu\n", ((uintptr_t)sp) & 0xF);
+void executeProgram(uint64_t* sp,uint64_t entryptr) {
+  printf("rsp mod 16 = %lu\n", ((uintptr_t)sp%16));
   asm volatile(
     "mov %0, %%rsp;"
     "jmp *%1\n\t"
@@ -187,29 +187,22 @@ int main(int argc, char **argv, char** envp) {
 
   Elf64_Elf_Hdr elfHdrBuffer;
 
-  printf("%s\n","prog0");
-
   Elf64_Addr phdr = readBinary(argv[1],&elfHdrBuffer);
-
-  printf("%s\n","prog1");
 
   FILE* file = fopen(argv[1],"rb");
   Elf64_Program_Hdr segments[elfHdrBuffer.e_phnum];
   Elf64_Addr segphdr= mmap(NULL,elfHdrBuffer.e_phnum*sizeof(Elf64_Program_Hdr),PROT_READ,MAP_PRIVATE,fileno(file),elfHdrBuffer.e_phoff);
   fclose(file);
 
-  printf("%s\n","prog2");
 
   uint64_t spVal;
   asm( "mov %%rsp, %0" : "=rm" ( spVal ));
 
   Elf64_auxv_t auxv[] = {
+    {AT_NULL,0},
     {AT_PAGESZ,sysconf(_SC_PAGE_SIZE)},
     {AT_RANDOM,spVal},
-    {AT_PHDR, segphdr},
     {AT_EXECFN,argv[1]},
-    {AT_PHENT,elfHdrBuffer.e_phentsize},
-    {AT_PHNUM,elfHdrBuffer.e_phnum},
     {AT_ENTRY,elfHdrBuffer.e_entry},
     {AT_UID,getuid()},
     {AT_EUID,geteuid()},
@@ -218,12 +211,16 @@ int main(int argc, char **argv, char** envp) {
     {AT_HWCAP,getauxval(AT_HWCAP)},
     {AT_HWCAP2,getauxval(AT_HWCAP2)},
     {AT_SECURE,0},
-    {AT_BASE,phdr},
     {AT_MINSIGSTKSZ,0x4000},
-    {AT_NULL,0}
+    {AT_BASE,phdr},
+    {AT_PHNUM,elfHdrBuffer.e_phnum},
+    {AT_PHENT,elfHdrBuffer.e_phentsize},
+    {AT_PHDR, segphdr},
   };
 
-  uint64_t* sp = allocateStack(auxv,argc-1,argv+1,envp);
+  //argv[0] = 
+  uint64_t startUpValues[6] = {};
+  uint64_t* sp = allocateStack(auxv,argc,argv,envp,startUpValues);
 
   printf("%lx sp\n",sp);
   printf("%lx entry\n",phdr+0x1f540);

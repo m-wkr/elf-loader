@@ -1,6 +1,6 @@
 #include "stack.h"
 
-uint64_t* allocateStack(Elf64_auxv_t* auxv, int argc, char** argv, char**envp) {
+uint64_t* allocateStack(Elf64_auxv_t* auxv, int argc, char** argv, char**envp,uint64_t arr[6]) {
   const size_t STACK_SIZE = 1024*1024*4;
   void* stack_bottom = mmap(NULL,STACK_SIZE,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0);
   uint64_t* sp = stack_bottom+STACK_SIZE; //stack_top /bottom rename these, confusing
@@ -27,10 +27,10 @@ uint64_t* allocateStack(Elf64_auxv_t* auxv, int argc, char** argv, char**envp) {
   }
 
 
-  sp-=2;
+  //sp-=2;
 
-  sp[0] = AT_NULL; //thing
-  sp[1] = 0;
+  /*sp[0] = AT_NULL; //thing
+  sp[1] = 0;*/
 
 
   //Get aux size
@@ -41,18 +41,21 @@ uint64_t* allocateStack(Elf64_auxv_t* auxv, int argc, char** argv, char**envp) {
     p++;
   }
 
-  for (int i = auxc-1; i >=0; i--) {
+  printf("WRONG? %d\n",auxc);
+
+  for (int i = 0; i < 17; i++) {
     sp-=2;
     sp[0] = auxv[i].a_type;
     sp[1] = auxv[i].a_un.a_val;
   }
 
-  sp--;
-  *sp = 0;
+  /*sp--;
+  *sp = 0;*/
 
   for (int i = envsIndex-1; i >= 0;i--) {
     sp--;
     sp[0] = envs[i];
+    printf("environ: %lx\n",envs[i]);
   }
 
   //argv 
@@ -67,6 +70,16 @@ uint64_t* allocateStack(Elf64_auxv_t* auxv, int argc, char** argv, char**envp) {
   //argc
   sp--;
   *sp = argc;
+
+  for (int i = 0; i < 100; i++) {
+    if (sp[i]) {
+    printf("Stack content: %lx\n",sp[i]);
+    } else if (sp[i] == 0){
+      printf("0 (%lx) ",sp+(uint64_t)i);
+    }
+  }
+
+  printf("%lx %lx\n",sp,*sp);
 
   return sp;
 }
