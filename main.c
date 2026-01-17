@@ -59,6 +59,12 @@ void elfLoad(char* elfStartPtr, void* stackPtr, int stackSize, size_t* baseAddr,
 
 
   for (int i = 0; i < ehdr->e_phnum; i++) {
+    if(phdr[i].p_type == PT_GNU_STACK && stackPtr != NULL) {
+      stackProt = getMemoryFlags(phdr[i].p_flags);
+
+      mprotect((unsigned char*) stackPtr, stackSize, stackProt);
+    }
+
     //skip non loadable segments and empty segments
     if (phdr[i].p_type != PT_LOAD) continue;
     if(!phdr[i].p_filesz) continue;
