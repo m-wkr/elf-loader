@@ -57,7 +57,6 @@ enum ELF_IDEN {
 
 typedef struct {
   Elf64_Word      sh_name;
-
   Elf64_Word      sh_type;
   Elf64_Lword      sh_flags;
   Elf64_Addr      sh_addr;
