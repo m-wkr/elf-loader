@@ -3,12 +3,6 @@
 #define ET_EXEC 0x2
 #define ET_DYN 0x3
 
-void error_handler(const enum error error_code) {
-  if (error_code != NO_ERROR) {
-    printf("File could not be opened, please ensure that it exists\n");
-  }
-}
-
 //write struct for errMsg, bool return type for now
 bool validateElfHeader(const Elf64_Elf_Hdr *elf_hdr) {
   if (elf_hdr->e_ident[EI_MAG0] != ELFMAG0) {
@@ -52,18 +46,18 @@ bool validateAllHdrSizes(const Elf64_Elf_Hdr *elf_hdr) {
   return true;
 }
 
-bool hasPHdr(const Elf64_Elf_Hdr *elf_hdr) { //Wrapper function
-  return (elf_hdr->e_phnum);
-}
+Elf64_Section_Hdr* getSection(char* sectionName, void *elfStartPtr) {
+  Elf64_Elf_Hdr* ehdr = (Elf64_Elf_Hdr*)elfStartPtr;
+  Elf64_Section_Hdr* shdr = (Elf64_Section_Hdr*)(elfStartPtr + ehdr->e_shoff);
 
-uint8_t getPHdrNum(const Elf64_Elf_Hdr *elf_hdr) {
-  return elf_hdr->e_phnum;
-}
+  Elf64_Section_Hdr* shdr_strtab = &shdr[ehdr->e_shstrndx];
+  char* sh_strtab_p = elfStartPtr + shdr_strtab->sh_offset;
 
-uint8_t getSHdrNum(const Elf64_Elf_Hdr *elf_hdr) {
-  return elf_hdr->e_shnum;
-}
+  for (int i = 0; i < ehdr->e_shnum; i++) {
+    if (!strcmp(sectionName,sh_strtab_p+shdr[i].sh_name)) {
+      return &shdr[i];
+    }
+  }
 
-bool isDyn(const Elf64_Elf_Hdr *elf_hdr) {
-  return elf_hdr->e_type == ET_DYN;
+  return NULL;
 }

@@ -1,6 +1,13 @@
+#include "elf.h"
 #include <stddef.h>
 #include <string.h>
 #include <sys/mman.h>
 #include <sys/auxv.h>
 
-uint64_t* allocateStack(Elf64_auxv_t* auxv,int argc, char** argv,char** envp,uint64_t arr[6]);
+#include <unistd.h>
+#include <fcntl.h>
+
+long getPageSize();
+
+void allocateStack(int argc, char** argv, char**envp,unsigned long* stackStore, char* stringStore, void* elfBuff,
+  Elf64_Elf_Hdr* ehdr, size_t* elfBaseAddr, size_t* elfEntryAddr, size_t* interpBaseAddr, size_t* interpEntryAddr);

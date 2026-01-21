@@ -1,12 +1,9 @@
-#include "elf.h"
 #include "stack.h"
 
-#include <unistd.h>
-#include <string.h>
+static long STACK_SIZE = 8*1024*1024;
+static long STACK_STORE_SIZE = 0x5000;
+static long STACK_STR_SIZE = 0x5000;
 
-long getPageSize() {
-  return sysconf(_SC_PAGE_SIZE);
-}
 
 int getMemoryFlags(int elfFlags) {
   int flags = 0;
@@ -26,9 +23,23 @@ int getMemoryFlags(int elfFlags) {
   return flags;
 }
 
+long memCeil(long memSize) {
+  long pgSize = getPageSize();
+  return ((memSize + pgSize - 1)/pgSize)*pgSize;
+}
+
+long memFloor(long memSize) {
+  long pgSize = getPageSize();
+  return (memSize/pgSize)*pgSize;
+}
+
+void exitWrapper() {
+  exit(0);
+}
+
 char* findINTERPPath(char* buffer) {
-  Elf64_Elf_Hdr *ehdr = (Elf64_Elf_Hdr*) buffer;
-  Elf64_Program_Hdr *phdr = (Elf64_Program_Hdr*)(buffer+ehdr->e_phoff);
+  Elf64_Elf_Hdr* ehdr = (Elf64_Elf_Hdr*) buffer;
+  Elf64_Program_Hdr* phdr = (Elf64_Program_Hdr*)(buffer+ehdr->e_phoff);
 
   for (int i = 0; i < ehdr->e_phnum; i++) {
     if (phdr[i].p_type == PT_INTERP) {
@@ -48,8 +59,8 @@ void elfLoad(char* elfStartPtr, void* stackPtr, int stackSize, size_t* baseAddr,
   Elf64_Program_Hdr* phdr = (Elf64_Program_Hdr*)((char*)elfStartPtr+ehdr->e_phoff);
 
   if (ehdr->e_type == ET_DYN) {
-    base = (size_t)mmap(NULL,getPageSize(),PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANON,-1,0);
-    munmap((void*)base,getPageSize());
+    base = (size_t)mmap(NULL,128*getPageSize(),PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANON,-1,0);
+    munmap((void*)base,128*getPageSize());
   } else {
     base = 0;
   }
@@ -71,9 +82,9 @@ void elfLoad(char* elfStartPtr, void* stackPtr, int stackSize, size_t* baseAddr,
 
 
 
-    void* mapStart = (void*) phdr[i].p_vaddr;
+    void* mapStart = (void*) memFloor(phdr[i].p_vaddr);
       int size = (void*) phdr[i].p_vaddr - mapStart;
-      int mapSize = phdr[i].p_memsz+size;
+      int mapSize = memCeil(phdr[i].p_memsz+size);
 
       mmap(base+mapStart,mapSize,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANON|MAP_FIXED,-1,0);
       memcpy((void*) base + phdr[i].p_vaddr,elfStartPtr+phdr[i].p_offset,phdr[i].p_filesz);
@@ -83,7 +94,7 @@ void elfLoad(char* elfStartPtr, void* stackPtr, int stackSize, size_t* baseAddr,
       }
 
       elfProt = getMemoryFlags(phdr[i].p_flags);
-      mprotect((unsigned char *) (base + mapStart), mapSize, elfProt);
+      mprotect((unsigned char*) (base + mapStart), mapSize, elfProt);
 
       if(baseAddr != NULL && (*baseAddr == -1 || *baseAddr > (size_t)(base + mapStart))) {
         *baseAddr = (size_t)(base + mapStart);
@@ -91,25 +102,27 @@ void elfLoad(char* elfStartPtr, void* stackPtr, int stackSize, size_t* baseAddr,
     }
 }
 
-void executeProgram(void* stackPtr,size_t* entryPtr) {
-  printf("rsp mod 16 = %lu\n", ((uintptr_t)stackPtr%16));
-  asm volatile(
-    "mov %0, %%rsp;"
-    "jmp *%1\n\t"
-    :
-    : "r"(stackPtr), "r"(entryPtr)
-    : "memory"
-  );
+void executeProgram(void* stackPtr,void* entryPtr,void* exitFunc) {
+  //printf("rsp mod 16 = %lu\n", ((uintptr_t)stackPtr%16));
+
+  register long rsp __asm__("rsp") = (long) stackPtr;
+	register long rdx __asm__("rdx") = (long) exitFunc;
+
+	__asm__ __volatile__(
+		"jmp *%0\n"
+		:
+		: "r" (entryPtr), "r" (rsp), "r" (rdx)
+		:
+	);
 
   __builtin_unreachable();
 }
 
-int main(int argc, char **argv, char** envp) {
+int main(int argc, char** argv, char** envp) {
   if (argc < 2) {
     return 0;
   }
 
-  
   FILE* fptr = fopen(argv[1],"rb");
   fseek(fptr,0,SEEK_END);
 
@@ -118,6 +131,56 @@ int main(int argc, char **argv, char** envp) {
 
   fseek(fptr,0,SEEK_SET);
   fread(elfBuff,buffSize,1,fptr);
+
+  Elf64_Elf_Hdr* ehdr = (Elf64_Elf_Hdr*)elfBuff;
+
+
+
+  bool valid = validateElfHeader(ehdr) && validateAllHdrSizes(ehdr);
+  if (!valid) return 1;
+
+
+  size_t elfBaseAddr, elfEntryAddr;
+  size_t interpBaseAddr = 0;
+  size_t interpEntryAddr = 0;
+  int strLen;
+  int strPtr = 0;
+  int stackPtr = 1;
+  int counter = 0;
+
+  void* stack = mmap(0, STACK_SIZE, PROT_READ|PROT_WRITE|PROT_EXEC, MAP_PRIVATE|MAP_ANON, -1, 0);
+  elfLoad(elfBuff, stack, STACK_SIZE, &elfBaseAddr, &elfEntryAddr);
+
+  char* interpName = findINTERPPath(elfBuff);
+
+  if(interpName) {
+    int f = open(interpName, O_RDONLY, 0);
+    int size = lseek(f, 0, SEEK_END);
+
+    lseek(f, 0, SEEK_SET);
+    void* elfLoader = mmap(0, memCeil(size), PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANON, -1, 0);
+
+    read(f, elfLoader, size);
+    elfLoad(elfLoader, stack, STACK_SIZE, &interpBaseAddr, &interpEntryAddr);
+    munmap(elfLoader, memCeil(size));
+  }
+
+  memset(stack, 0, STACK_STORE_SIZE);
+
+  unsigned long* stackStorage = stack + STACK_SIZE - STACK_STORE_SIZE - STACK_STR_SIZE;
+  char* string_storage =  stack + STACK_SIZE - STACK_STR_SIZE;
+
+  allocateStack(argc,argv,envp,
+    stackStorage,string_storage,
+    elfBuff,ehdr,&elfBaseAddr,&elfEntryAddr,
+    &interpBaseAddr,&interpEntryAddr);
+
+
+  if (interpEntryAddr) {
+    executeProgram(stackStorage,interpEntryAddr,exitWrapper);
+  } else {
+    executeProgram(stackStorage,elfEntryAddr,exitWrapper);
+  }
 
   return 0;
 }
