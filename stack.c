@@ -4,6 +4,16 @@ long getPageSize() {
   return sysconf(_SC_PAGE_SIZE);
 }
 
+long memCeil(long memSize) {
+  long pgSize = getPageSize();
+  return ((memSize + pgSize - 1)/pgSize)*pgSize;
+}
+
+long memFloor(long memSize) {
+  long pgSize = getPageSize();
+  return (memSize/pgSize)*pgSize;
+}
+
 int countEnvp(char** envp) {
   int envc = 0;
   

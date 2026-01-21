@@ -23,16 +23,6 @@ int getMemoryFlags(int elfFlags) {
   return flags;
 }
 
-long memCeil(long memSize) {
-  long pgSize = getPageSize();
-  return ((memSize + pgSize - 1)/pgSize)*pgSize;
-}
-
-long memFloor(long memSize) {
-  long pgSize = getPageSize();
-  return (memSize/pgSize)*pgSize;
-}
-
 void exitWrapper() {
   exit(0);
 }
@@ -101,6 +91,7 @@ void elfLoad(char* elfStartPtr, void* stackPtr, int stackSize, size_t* baseAddr,
       }
     }
 }
+
 
 void executeProgram(void* stackPtr,void* entryPtr,void* exitFunc) {
   //printf("rsp mod 16 = %lu\n", ((uintptr_t)stackPtr%16));
