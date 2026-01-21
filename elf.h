@@ -57,7 +57,6 @@ enum ELF_IDEN {
 
 typedef struct {
   Elf64_Word      sh_name;
-
   Elf64_Word      sh_type;
   Elf64_Lword      sh_flags;
   Elf64_Addr      sh_addr;
@@ -80,13 +79,10 @@ typedef struct {
   Elf64_Lword      p_aligns;
 } Elf64_Program_Hdr;
 
-typedef enum error {
-  NO_ERROR,
-  FILE_ISSUE
+typedef struct Elf64_auxv_t {
+  size_t a_type;
+  size_t a_val;
 };
-
-
-void error_handler(const enum error error_code);
 
 //write struct for errMsg, bool return type for now
 bool validateElfHeader(const Elf64_Elf_Hdr *elf_hdr);
@@ -95,6 +91,4 @@ bool validateAllHdrSizes(const Elf64_Elf_Hdr *elf_hdr);
 
 bool hasPHdr(const Elf64_Elf_Hdr *elf_hdr);
 
-uint8_t getPHdrNum(const Elf64_Elf_Hdr *elf_hdr);
-
-uint8_t getSHdrNum(const Elf64_Elf_Hdr *elf_hdr);
+Elf64_Section_Hdr* getSection(char* sectionName, void *elfStartPtr);
